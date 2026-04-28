@@ -1,0 +1,27 @@
+name: AIRadar Daily Digest
+
+on:
+  schedule:
+    # 8:00 AM IST = 02:30 UTC
+    - cron: "30 2 * * *"
+  workflow_dispatch: # allow manual trigger
+
+jobs:
+  send-digest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run AIRadar
+        env:
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+        run: python main.py
