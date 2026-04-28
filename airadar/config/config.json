@@ -19,7 +19,15 @@
     "https://www.anthropic.com/rss.xml",
     "https://deepmind.google/blog/rss/",
     "https://blogs.microsoft.com/ai/feed/",
-    "https://arxiv.org/rss/cs.AI"
+    "https://arxiv.org/rss/cs.AI",
+    "https://paperswithcode.com/rss",
+    "https://ai.googleblog.com/feeds/posts/default",
+    "https://ai.meta.com/blog/rss/",
+    "https://www.microsoft.com/en-us/research/feed/",
+    "https://mistral.ai/news/rss",
+    "https://stability.ai/blog/rss",
+    "https://blog.eleuther.ai/rss",
+    "https://lmsys.org/blog/rss"
   ],
   "min_score": 1,
   "max_articles": 30,

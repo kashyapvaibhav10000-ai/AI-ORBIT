@@ -3,8 +3,80 @@ import urllib.error
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 import logging
+import json
+import os
 
 logger = logging.getLogger(__name__)
+
+_HEALTH_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs", "feed_health.json")
+_feed_health: dict = {}
+
+
+def _load_health() -> None:
+    global _feed_health
+    os.makedirs(os.path.dirname(_HEALTH_FILE), exist_ok=True)
+    if os.path.exists(_HEALTH_FILE):
+        try:
+            with open(_HEALTH_FILE, "r", encoding="utf-8") as f:
+                _feed_health = json.load(f)
+        except Exception:
+            _feed_health = {}
+    else:
+        _feed_health = {}
+
+
+def _save_health() -> None:
+    os.makedirs(os.path.dirname(_HEALTH_FILE), exist_ok=True)
+    with open(_HEALTH_FILE, "w", encoding="utf-8") as f:
+        json.dump(_feed_health, f, indent=2)
+
+
+def _get_feed_record(feed_url: str) -> dict:
+    if feed_url not in _feed_health:
+        _feed_health[feed_url] = {
+            "feed_url": feed_url,
+            "last_success": None,
+            "last_failure": None,
+            "consecutive_failures": 0,
+            "total_failures": 0,
+            "total_successes": 0,
+            "status": "healthy",
+        }
+    return _feed_health[feed_url]
+
+
+def _update_health_success(feed_url: str) -> None:
+    rec = _get_feed_record(feed_url)
+    rec["last_success"] = datetime.now(timezone.utc).isoformat()
+    rec["consecutive_failures"] = 0
+    rec["total_successes"] += 1
+    rec["status"] = "healthy"
+
+
+def _update_health_failure(feed_url: str) -> None:
+    rec = _get_feed_record(feed_url)
+    rec["last_failure"] = datetime.now(timezone.utc).isoformat()
+    rec["consecutive_failures"] += 1
+    rec["total_failures"] += 1
+    cf = rec["consecutive_failures"]
+    if cf >= 7:
+        rec["status"] = "dead"
+    elif cf >= 3:
+        rec["status"] = "degraded"
+
+
+def print_health_summary() -> None:
+    healthy = [url for url, r in _feed_health.items() if r["status"] == "healthy"]
+    degraded = [url for url, r in _feed_health.items() if r["status"] == "degraded"]
+    dead = [url for url, r in _feed_health.items() if r["status"] == "dead"]
+    print(f"{len(healthy)} feeds healthy, {len(degraded)} degraded, {len(dead)} dead")
+
+
+def get_health_summary() -> dict:
+    healthy = [url for url, r in _feed_health.items() if r["status"] == "healthy"]
+    degraded = [url for url, r in _feed_health.items() if r["status"] == "degraded"]
+    dead = [url for url, r in _feed_health.items() if r["status"] == "dead"]
+    return {"healthy": healthy, "degraded": degraded, "dead": dead}
 
 NAMESPACES = {
     "media": "http://search.yahoo.com/mrss/",
@@ -70,6 +142,10 @@ def fetch_feed(feed_url: str, timeout: int = 10) -> list[dict]:
     source = _source_from_url(feed_url)
     is_community = _is_community(feed_url)
 
+    rec = _get_feed_record(feed_url)
+    if rec["status"] == "dead":
+        logger.warning("Feed marked DEAD, attempting anyway: %s", feed_url)
+
     try:
         req = urllib.request.Request(
             feed_url,
@@ -79,15 +155,21 @@ def fetch_feed(feed_url: str, timeout: int = 10) -> list[dict]:
             raw = resp.read()
     except urllib.error.URLError as e:
         logger.warning("Feed fetch failed [%s]: %s", feed_url, e)
+        _update_health_failure(feed_url)
+        _save_health()
         return []
     except Exception as e:
         logger.warning("Feed fetch error [%s]: %s", feed_url, e)
+        _update_health_failure(feed_url)
+        _save_health()
         return []
 
     try:
         root = ET.fromstring(raw)
     except ET.ParseError as e:
         logger.warning("Feed parse error [%s]: %s", feed_url, e)
+        _update_health_failure(feed_url)
+        _save_health()
         return []
 
     # Detect Atom vs RSS
@@ -97,6 +179,8 @@ def fetch_feed(feed_url: str, timeout: int = 10) -> list[dict]:
     else:
         articles = _parse_rss(root, source, is_community)
 
+    _update_health_success(feed_url)
+    _save_health()
     return articles
 
 
@@ -149,9 +233,11 @@ def _parse_atom(root: ET.Element, source: str, is_community: bool) -> list[dict]
 
 def fetch_all_feeds(feeds: list[str], timeout: int = 10) -> list[dict]:
     """Fetch all feeds. Log failures, never crash."""
+    _load_health()
     all_articles = []
     for feed_url in feeds:
         fetched = fetch_feed(feed_url, timeout=timeout)
         logger.info("Fetched %d articles from %s", len(fetched), feed_url)
         all_articles.extend(fetched)
+    print_health_summary()
     return all_articles

@@ -14,6 +14,7 @@ SECTION_ORDER = [s[0] for s in SECTIONS]
 SECTION_META = {s[0]: (s[1], s[2]) for s in SECTIONS}
 
 TOP_SCORE_THRESHOLD = 3
+SECTION_MAX = 9
 
 
 def _article_html(article: dict) -> str:
@@ -35,19 +36,65 @@ def _article_html(article: dict) -> str:
 
 
 def _section_html(section_id: str, articles: list[dict]) -> str:
-    if not articles:
-        return ""
     label, desc = SECTION_META[section_id]
-    items = "\n".join(_article_html(a) for a in articles)
+    if not articles:
+        placeholder = '<div class="article"><em style="color:#555">No articles in this category today.</em></div>'
+        return f"""
+    <div class="section">
+      <h2>{label} (0)</h2>
+      <p class="section-desc">{desc}</p>
+      {placeholder}
+    </div>"""
+    capped = sorted(articles, key=lambda a: a.get("score", 0), reverse=True)[:SECTION_MAX]
+    items = "\n".join(_article_html(a) for a in capped)
     return f"""
     <div class="section">
-      <h2>{label}</h2>
+      <h2>{label} ({len(capped)})</h2>
       <p class="section-desc">{desc}</p>
       {items}
     </div>"""
 
 
-def build_html(articles: list[dict], digest_date: str | None = None) -> str:
+def _feed_health_html(health: dict | None, raw_count: int, dedup_count: int, run_seconds: float) -> str:
+    if health is None:
+        health = {"healthy": [], "degraded": [], "dead": []}
+    healthy = health.get("healthy", [])
+    degraded = health.get("degraded", [])
+    dead = health.get("dead", [])
+
+    def _names(urls: list) -> str:
+        from urllib.parse import urlparse
+        names = []
+        for u in urls:
+            host = urlparse(u).netloc.replace("www.", "")
+            names.append(host)
+        return ", ".join(names) if names else "—"
+
+    degraded_list = f" ({_names(degraded)})" if degraded else ""
+    dead_list = f" ({_names(dead)})" if dead else ""
+
+    return f"""
+    <div class="section">
+      <h2>📡 FEED HEALTH</h2>
+      <div class="stats" style="font-size:12px;line-height:1.8">
+        Healthy feeds: {len(healthy)}<br>
+        Degraded feeds: {len(degraded)}{degraded_list}<br>
+        Dead feeds: {len(dead)}{dead_list}<br>
+        Total articles fetched: {raw_count}<br>
+        After dedup: {dedup_count}<br>
+        Run time: {run_seconds:.1f}s
+      </div>
+    </div>"""
+
+
+def build_html(
+    articles: list[dict],
+    digest_date: str | None = None,
+    health: dict | None = None,
+    raw_count: int = 0,
+    dedup_count: int = 0,
+    run_seconds: float = 0.0,
+) -> str:
     if digest_date is None:
         digest_date = date.today().strftime("%B %d, %Y")
 
@@ -70,17 +117,23 @@ def build_html(articles: list[dict], digest_date: str | None = None) -> str:
         else:
             buckets["quickhits"].append(art)
 
+    # Apply per-section cap and count
+    for s_id in SECTION_ORDER:
+        if len(buckets[s_id]) > SECTION_MAX:
+            buckets[s_id] = sorted(buckets[s_id], key=lambda a: a.get("score", 0), reverse=True)[:SECTION_MAX]
+
     total = sum(len(v) for v in buckets.values())
     sections_html = "\n".join(
         _section_html(s_id, buckets[s_id]) for s_id in SECTION_ORDER
     )
+    health_html = _feed_health_html(health, raw_count, dedup_count, run_seconds)
 
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>AIRadar — Daily AI Digest | {digest_date}</title>
+<title>AI-ORBIT — Daily AI Digest | {digest_date}</title>
 <style>
   body {{
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -173,15 +226,16 @@ def build_html(articles: list[dict], digest_date: str | None = None) -> str:
 <body>
 <div class="wrapper">
   <div class="header">
-    <h1>🤖 AIRadar</h1>
+    <h1>🛸 AI-ORBIT</h1>
     <p class="subtitle">Daily AI Digest &bull; {digest_date}</p>
   </div>
   <div class="stats">
-    {total} articles curated from 13 sources &bull; Ranked by relevance score
+    {total} articles curated &bull; Ranked by relevance score
   </div>
   {sections_html}
+  {health_html}
   <div class="footer">
-    <p>AIRadar — Your daily AI radar. Open source.<br>
+    <p>AI-ORBIT — Your daily AI radar. Open source.<br>
     Fetched from public RSS feeds. No tracking.</p>
   </div>
 </div>
@@ -189,7 +243,8 @@ def build_html(articles: list[dict], digest_date: str | None = None) -> str:
 </html>"""
 
 
-def build_subject(digest_date: str | None = None) -> str:
+def build_subject(digest_date: str | None = None, article_count: int = 0) -> str:
     if digest_date is None:
         digest_date = date.today().strftime("%B %d, %Y")
-    return f"🤖 AIRadar — Daily AI Digest | {digest_date}"
+    count_str = f" | {article_count} articles" if article_count else ""
+    return f"🛸 AI-ORBIT Daily Digest | {digest_date}{count_str}"

@@ -7,13 +7,14 @@ Pure stdlib. Zero dependencies.
 import json
 import logging
 import sys
+import time
 from datetime import date
 from pathlib import Path
 
 # Allow running from project root
 sys.path.insert(0, str(Path(__file__).parent))
 
-from src.fetcher import fetch_all_feeds
+from src.fetcher import fetch_all_feeds, get_health_summary
 from src.filter import filter_and_rank
 from src.formatter import build_html, build_subject
 from src.emailer import send_digest
@@ -51,11 +52,15 @@ def run() -> None:
         sys.exit(1)
 
     logger.info("Fetching %d feeds...", len(feeds))
+    t_start = time.monotonic()
     raw_articles = fetch_all_feeds(feeds, timeout=timeout)
+    run_seconds = time.monotonic() - t_start
     logger.info("Total raw articles: %d", len(raw_articles))
 
+    health = get_health_summary()
+    raw_count = len(raw_articles)
+
     digest_date = date.today().strftime("%B %d, %Y")
-    subject = build_subject(digest_date)
 
     results = {"sent": 0, "failed": 0}
 
@@ -81,8 +86,18 @@ def run() -> None:
             logger.warning("No articles passed filter for %s — digest skipped", name)
             continue
 
-        logger.info("Digest contains %d articles for %s", len(articles), name)
-        html = build_html(articles, digest_date=digest_date)
+        dedup_count = len(articles)
+        logger.info("Digest contains %d articles for %s", dedup_count, name)
+
+        subject = build_subject(digest_date, article_count=dedup_count)
+        html = build_html(
+            articles,
+            digest_date=digest_date,
+            health=health,
+            raw_count=raw_count,
+            dedup_count=dedup_count,
+            run_seconds=run_seconds,
+        )
 
         ok = send_digest(name, email, subject, html)
         if ok:
