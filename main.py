@@ -8,6 +8,10 @@
 ║  Fetches 13 RSS feeds, scores, deduplicates, and emails      ║
 ║  a beautiful dark-themed HTML newsletter.                    ║
 ╚══════════════════════════════════════════════════════════════╝
+
+Usage:
+  python main.py              # normal run
+  python main.py --verbose    # verbose logging
 """
 
 import urllib.request
@@ -19,6 +23,7 @@ import json
 import re
 import os
 import sys
+import hashlib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from datetime import datetime, timezone, timedelta
@@ -26,13 +31,18 @@ from collections import defaultdict
 from html import escape as html_escape
 
 # ═══════════════════════════════════════════════════════════════
-# ⚙️  CONFIGURATION — Fill in your credentials
+# ⚙️  CONFIGURATION
 # ═══════════════════════════════════════════════════════════════
 
-GMAIL_ADDRESS = os.environ.get("GMAIL_ADDRESS", "")
+GMAIL_ADDRESS      = os.environ.get("GMAIL_ADDRESS", "")
 GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD", "")
-RECIPIENT_EMAIL = os.environ.get("RECIPIENT_EMAIL", "")
-MAX_ARTICLES_PER_SECTION = 5
+RECIPIENT_EMAIL    = os.environ.get("RECIPIENT_EMAIL", "")
+
+SCRIPT_DIR       = os.path.dirname(os.path.abspath(__file__))
+SEEN_CACHE_FILE  = os.path.join(SCRIPT_DIR, "seen_articles.json")
+ORBIT_STATE_FILE = os.path.join(SCRIPT_DIR, "orbit_state.json")
+
+VERBOSE = "--verbose" in sys.argv
 
 # ═══════════════════════════════════════════════════════════════
 # 📡 RSS FEED SOURCES
@@ -40,18 +50,18 @@ MAX_ARTICLES_PER_SECTION = 5
 
 RSS_FEEDS = [
     {"url": "https://hnrss.org/newest?q=AI+LLM+GPT+machine+learning", "name": "Hacker News"},
-    {"url": "https://huggingface.co/blog/feed.xml", "name": "Hugging Face"},
-    {"url": "https://arxiv.org/rss/cs.AI", "name": "arXiv cs.AI"},
+    {"url": "https://huggingface.co/blog/feed.xml",                    "name": "Hugging Face"},
+    {"url": "https://arxiv.org/rss/cs.AI",                             "name": "arXiv cs.AI"},
     {"url": "https://techcrunch.com/category/artificial-intelligence/feed/", "name": "TechCrunch"},
-    {"url": "https://venturebeat.com/category/ai/feed/", "name": "VentureBeat"},
-    {"url": "https://www.reddit.com/r/MachineLearning/.rss", "name": "r/MachineLearning"},
-    {"url": "https://www.reddit.com/r/LocalLLaMA/.rss", "name": "r/LocalLLaMA"},
-    {"url": "https://deepmind.google/blog/rss.xml", "name": "Google DeepMind"},
-    {"url": "https://openai.com/blog/rss.xml", "name": "OpenAI"},
-    {"url": "https://www.anthropic.com/rss.xml", "name": "Anthropic"},
-    {"url": "https://www.technologyreview.com/feed/", "name": "MIT Tech Review"},
-    {"url": "https://jack-clark.net/feed/", "name": "Import AI"},
-    {"url": "https://read.deeplearning.ai/the-batch/rss/", "name": "The Batch"},
+    {"url": "https://venturebeat.com/category/ai/feed/",               "name": "VentureBeat"},
+    {"url": "https://www.reddit.com/r/MachineLearning/.rss",           "name": "r/MachineLearning"},
+    {"url": "https://www.reddit.com/r/LocalLLaMA/.rss",                "name": "r/LocalLLaMA"},
+    {"url": "https://deepmind.google/blog/rss.xml",                    "name": "Google DeepMind"},
+    {"url": "https://openai.com/blog/rss.xml",                         "name": "OpenAI"},
+    {"url": "https://www.anthropic.com/rss.xml",                       "name": "Anthropic"},
+    {"url": "https://www.technologyreview.com/feed/",                  "name": "MIT Tech Review"},
+    {"url": "https://jack-clark.net/feed/",                            "name": "Import AI"},
+    {"url": "https://read.deeplearning.ai/the-batch/rss/",             "name": "The Batch"},
 ]
 
 # ═══════════════════════════════════════════════════════════════
@@ -70,72 +80,166 @@ KEYWORDS_LOW = [
     "tech", "neural", "data", "compute", "chip", "gpu",
 ]
 
-# Category keyword maps
-CAT_LAUNCHES = ["launch", "release", "announce", "new", "debut"]
-CAT_OPENSOURCE = ["free", "open source", "open-source", "weights", "huggingface", "hugging face"]
-CAT_RESEARCH = ["paper", "arxiv", "research", "study", "benchmark"]
-CAT_INDUSTRY = ["funding", "investment", "billion", "million", "startup", "acquire", "acquisition"]
+CAT_LAUNCHES         = ["launch", "release", "announce", "new", "debut"]
+CAT_OPENSOURCE       = ["free", "open source", "open-source", "weights", "huggingface", "hugging face"]
+CAT_RESEARCH         = ["paper", "arxiv", "research", "study", "benchmark"]
+CAT_INDUSTRY         = ["funding", "investment", "billion", "million", "startup", "acquire", "acquisition"]
 CAT_COMMUNITY_SOURCES = ["hacker news", "r/machinelearning", "r/localllama"]
 
 # ═══════════════════════════════════════════════════════════════
-# 🔧 UTILITY FUNCTIONS
+# 🔧 LOGGING
 # ═══════════════════════════════════════════════════════════════
 
 
 def log(msg):
-    """Print a timestamped log message."""
     ts = datetime.now().strftime("%H:%M:%S")
     print(f"  [{ts}] {msg}")
 
 
-def time_ago(dt_str):
-    """Convert a datetime string to a human-readable 'time ago' format."""
+def vlog(msg):
+    if VERBOSE:
+        ts = datetime.now().strftime("%H:%M:%S")
+        print(f"  [{ts}] [V] {msg}")
+
+
+# ═══════════════════════════════════════════════════════════════
+# ⏱️  TIMESTAMP UTILITIES
+# ═══════════════════════════════════════════════════════════════
+
+_DATE_FORMATS = [
+    "%a, %d %b %Y %H:%M:%S %z",
+    "%a, %d %b %Y %H:%M:%S %Z",
+    "%Y-%m-%dT%H:%M:%S%z",
+    "%Y-%m-%dT%H:%M:%SZ",
+    "%Y-%m-%d %H:%M:%S",
+    "%Y-%m-%dT%H:%M:%S.%f%z",
+    "%Y-%m-%dT%H:%M:%S.%fZ",
+    "%d %b %Y %H:%M:%S %z",
+]
+
+
+def parse_pub_date(dt_str):
+    """Parse pub_date string → UTC-aware datetime, or None on failure."""
     if not dt_str:
-        return "recently"
-    formats = [
-        "%a, %d %b %Y %H:%M:%S %z",
-        "%a, %d %b %Y %H:%M:%S %Z",
-        "%Y-%m-%dT%H:%M:%S%z",
-        "%Y-%m-%dT%H:%M:%SZ",
-        "%Y-%m-%d %H:%M:%S",
-        "%Y-%m-%dT%H:%M:%S.%f%z",
-        "%Y-%m-%dT%H:%M:%S.%fZ",
-        "%d %b %Y %H:%M:%S %z",
-    ]
-    parsed = None
-    for fmt in formats:
+        return None
+    for fmt in _DATE_FORMATS:
         try:
             parsed = datetime.strptime(dt_str.strip(), fmt)
-            break
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed.astimezone(timezone.utc)
         except (ValueError, TypeError):
             continue
+    return None
+
+
+def format_timestamp(article):
+    """Return 'May 04 · 3h ago' string. Uses cached _parsed_dt if present."""
+    parsed = article.get("_parsed_dt") or parse_pub_date(article.get("pub_date", ""))
     if not parsed:
-        return "recently"
+        return "unknown"
     now = datetime.now(timezone.utc)
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
     diff = now - parsed
-    seconds = int(diff.total_seconds())
-    if seconds < 0:
-        return "just now"
-    if seconds < 60:
-        return "just now"
-    if seconds < 3600:
-        m = seconds // 60
-        return f"{m}m ago"
-    if seconds < 86400:
-        h = seconds // 3600
-        return f"{h}h ago"
-    d = seconds // 86400
-    if d == 1:
-        return "1 day ago"
-    if d < 30:
-        return f"{d} days ago"
-    return f"{d // 30}mo ago"
+    total_secs = int(diff.total_seconds())
+    date_str = parsed.strftime("%b %d")
+    if total_secs < 3600:
+        mins = max(1, total_secs // 60)
+        return f"{date_str} · {mins}m ago"
+    hours = total_secs // 3600
+    return f"{date_str} · {hours}h ago"
+
+
+def is_within_hours(article, max_hours):
+    """True if article._parsed_dt is within max_hours of now."""
+    parsed = article.get("_parsed_dt")
+    if not parsed:
+        return False
+    diff = datetime.now(timezone.utc) - parsed
+    return diff.total_seconds() <= max_hours * 3600
+
+
+# ═══════════════════════════════════════════════════════════════
+# 💾 SEEN-ARTICLE CACHE  (cross-run deduplication)
+# ═══════════════════════════════════════════════════════════════
+
+
+def load_seen_cache():
+    """Load seen_articles.json; auto-purge entries older than 7 days."""
+    if not os.path.exists(SEEN_CACHE_FILE):
+        return {}
+    try:
+        with open(SEEN_CACHE_FILE) as f:
+            raw = json.load(f)
+    except (json.JSONDecodeError, IOError):
+        return {}
+    cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+    purged = {}
+    stale = 0
+    for k, v in raw.items():
+        try:
+            ts = datetime.fromisoformat(v)
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+            if ts > cutoff:
+                purged[k] = v
+            else:
+                stale += 1
+        except (ValueError, TypeError):
+            stale += 1
+    if stale:
+        vlog(f"Cache: purged {stale} stale entries (>7 days)")
+    vlog(f"Cache: loaded {len(purged)} seen keys")
+    return purged
+
+
+def save_seen_cache(cache):
+    try:
+        with open(SEEN_CACHE_FILE, "w") as f:
+            json.dump(cache, f, indent=2)
+        vlog(f"Cache: saved {len(cache)} keys → {SEEN_CACHE_FILE}")
+    except IOError as e:
+        log(f"⚠️  Could not save seen cache: {e}")
+
+
+def _article_cache_keys(article):
+    """Return (url_key, title_key) strings for cache lookup."""
+    url_key   = "url:"   + article["link"].strip()
+    title_key = "title:" + hashlib.md5(
+        article["title"].lower().strip().encode("utf-8", errors="replace")
+    ).hexdigest()
+    return url_key, title_key
+
+
+# ═══════════════════════════════════════════════════════════════
+# 📋 ORBIT STATE  (top-story rotation)
+# ═══════════════════════════════════════════════════════════════
+
+
+def load_orbit_state():
+    if not os.path.exists(ORBIT_STATE_FILE):
+        return {}
+    try:
+        with open(ORBIT_STATE_FILE) as f:
+            return json.load(f)
+    except (json.JSONDecodeError, IOError):
+        return {}
+
+
+def save_orbit_state(state):
+    try:
+        with open(ORBIT_STATE_FILE, "w") as f:
+            json.dump(state, f, indent=2)
+        vlog(f"State: saved → {ORBIT_STATE_FILE}")
+    except IOError as e:
+        log(f"⚠️  Could not save orbit state: {e}")
+
+
+# ═══════════════════════════════════════════════════════════════
+# 🧹 TEXT UTILITIES
+# ═══════════════════════════════════════════════════════════════
 
 
 def clean_text(text):
-    """Strip HTML tags and extra whitespace from text."""
     if not text:
         return ""
     text = re.sub(r"<[^>]+>", "", text)
@@ -146,7 +250,6 @@ def clean_text(text):
 
 
 def normalize_words(title):
-    """Extract lowercase alphanumeric words from a title for dedup comparison."""
     return set(re.findall(r"[a-z0-9]+", title.lower()))
 
 
@@ -156,11 +259,7 @@ def normalize_words(title):
 
 
 def fetch_feed(feed_info):
-    """
-    Fetch and parse a single RSS/Atom feed.
-    Returns a list of article dicts. Skips silently on error.
-    """
-    url = feed_info["url"]
+    url    = feed_info["url"]
     source = feed_info["name"]
     articles = []
 
@@ -169,13 +268,12 @@ def fetch_feed(feed_info):
             url,
             headers={
                 "User-Agent": "AI-ORBIT/1.0 (Python; RSS Reader)",
-                "Accept": "application/rss+xml, application/xml, text/xml, */*",
+                "Accept":     "application/rss+xml, application/xml, text/xml, */*",
             },
         )
         with urllib.request.urlopen(req, timeout=10) as response:
             raw = response.read()
 
-        # Try to decode
         for encoding in ("utf-8", "latin-1", "ascii"):
             try:
                 xml_text = raw.decode(encoding)
@@ -185,60 +283,42 @@ def fetch_feed(feed_info):
         else:
             xml_text = raw.decode("utf-8", errors="replace")
 
-        # Strip XML namespace prefixes for easier parsing
         xml_text = re.sub(r"xmlns\s*=\s*['\"][^'\"]*['\"]", "", xml_text, count=1)
-
         root = ET.fromstring(xml_text)
 
-        # ── RSS 2.0 format ──
+        # RSS 2.0
         for item in root.findall(".//item"):
-            title = clean_text(
-                (item.findtext("title") or "").strip()
-            )
-            link = (item.findtext("link") or "").strip()
-            pub_date = (item.findtext("pubDate") or "").strip()
-            description = clean_text(
-                (item.findtext("description") or "")[:300]
-            )
+            title   = clean_text((item.findtext("title")       or "").strip())
+            link    = (item.findtext("link")                    or "").strip()
+            pub_date = (item.findtext("pubDate")               or "").strip()
+            description = clean_text((item.findtext("description") or "")[:300])
             if title and link:
                 articles.append({
-                    "title": title,
-                    "link": link,
-                    "source": source,
-                    "pub_date": pub_date,
-                    "description": description,
-                    "score": 0,
+                    "title": title, "link": link, "source": source,
+                    "pub_date": pub_date, "description": description, "score": 0,
                 })
 
-        # ── Atom format ──
+        # Atom
         for entry in root.findall(".//entry"):
-            title = clean_text(
-                (entry.findtext("title") or "").strip()
-            )
+            title = clean_text((entry.findtext("title") or "").strip())
             link_el = entry.find("link")
             link = ""
             if link_el is not None:
                 link = link_el.get("href", "") or link_el.text or ""
             link = link.strip()
             pub_date = (
-                entry.findtext("published")
-                or entry.findtext("updated")
-                or ""
+                entry.findtext("published") or entry.findtext("updated") or ""
             ).strip()
             summary = clean_text(
                 (entry.findtext("summary") or entry.findtext("content") or "")[:300]
             )
             if title and link:
                 articles.append({
-                    "title": title,
-                    "link": link,
-                    "source": source,
-                    "pub_date": pub_date,
-                    "description": summary,
-                    "score": 0,
+                    "title": title, "link": link, "source": source,
+                    "pub_date": pub_date, "description": summary, "score": 0,
                 })
 
-        log(f"✅ {source}: {len(articles)} articles")
+        log(f"✅ {source}: {len(articles)} articles fetched")
 
     except urllib.error.URLError as e:
         log(f"⚠️  {source}: Network error — {e.reason}")
@@ -251,7 +331,6 @@ def fetch_feed(feed_info):
 
 
 def fetch_all_feeds():
-    """Fetch articles from all configured RSS feeds sequentially."""
     all_articles = []
     log(f"Fetching {len(RSS_FEEDS)} feeds...")
     print()
@@ -259,8 +338,40 @@ def fetch_all_feeds():
         articles = fetch_feed(feed)
         all_articles.extend(articles)
     print()
-    log(f"Total raw articles: {len(all_articles)}")
+    log(f"Total raw articles fetched: {len(all_articles)}")
     return all_articles
+
+
+# ═══════════════════════════════════════════════════════════════
+# 🕐 FRESHNESS FILTER  (strict 24-hour)
+# ═══════════════════════════════════════════════════════════════
+
+
+def filter_fresh(articles):
+    """
+    Keep only articles published within the last 24 hours.
+    Attaches _parsed_dt to each kept article for reuse downstream.
+    Returns (fresh_articles, filtered_count).
+    """
+    fresh = []
+    filtered = 0
+    no_date = 0
+    for a in articles:
+        parsed = parse_pub_date(a.get("pub_date", ""))
+        if parsed is None:
+            no_date += 1
+            filtered += 1
+            vlog(f"  [NO-DATE] {a['title'][:60]}")
+            continue
+        a["_parsed_dt"] = parsed
+        diff = datetime.now(timezone.utc) - parsed
+        if diff.total_seconds() <= 86400:
+            fresh.append(a)
+        else:
+            filtered += 1
+            vlog(f"  [STALE {int(diff.total_seconds()//3600)}h] {a['title'][:60]}")
+    log(f"Freshness filter: {len(fresh)} fresh | {filtered} rejected ({no_date} no-date, {filtered-no_date} >24h)")
+    return fresh, filtered
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -269,7 +380,6 @@ def fetch_all_feeds():
 
 
 def score_article(article):
-    """Score an article 0–10 based on keyword hits in title + description."""
     text = (article["title"] + " " + article.get("description", "")).lower()
     score = 0
     for kw in KEYWORDS_HIGH:
@@ -286,7 +396,6 @@ def score_article(article):
 
 
 def score_all(articles):
-    """Score and sort all articles by score descending."""
     for a in articles:
         score_article(a)
     articles.sort(key=lambda x: x["score"], reverse=True)
@@ -294,17 +403,32 @@ def score_all(articles):
 
 
 # ═══════════════════════════════════════════════════════════════
-# 🧹 DEDUPLICATION
+# 🧹 DEDUPLICATION  (cross-run + within-run)
 # ═══════════════════════════════════════════════════════════════
 
 
-def deduplicate(articles, threshold=0.6):
+def deduplicate(articles, seen_cache, threshold=0.6):
     """
-    Remove duplicate articles based on title word overlap.
-    If two articles share ≥60% words in their titles, keep the higher-scored one.
+    Two-stage dedup:
+      1. Cross-run: skip articles whose URL or title hash is in seen_cache.
+      2. Within-run: skip articles sharing ≥60% title words with a kept article.
+    Returns (kept_articles, new_cache_key_pairs).
     """
     keep = []
+    new_keys = []
+    cross_skipped = 0
+    within_skipped = 0
+
     for article in articles:
+        url_key, title_key = _article_cache_keys(article)
+
+        # Cross-run check
+        if url_key in seen_cache or title_key in seen_cache:
+            cross_skipped += 1
+            vlog(f"  [SEEN] {article['title'][:60]}")
+            continue
+
+        # Within-run title-overlap check
         words_a = normalize_words(article["title"])
         is_dup = False
         for kept in keep:
@@ -315,11 +439,16 @@ def deduplicate(articles, threshold=0.6):
             smaller = min(len(words_a), len(words_b))
             if smaller > 0 and (overlap / smaller) >= threshold:
                 is_dup = True
+                within_skipped += 1
+                vlog(f"  [DUP] {article['title'][:60]}")
                 break
+
         if not is_dup:
             keep.append(article)
-    log(f"After dedup: {len(keep)} unique articles (removed {len(articles) - len(keep)} dupes)")
-    return keep
+            new_keys.append((url_key, title_key))
+
+    log(f"Dedup: kept={len(keep)} | cross-run skip={cross_skipped} | within-run skip={within_skipped}")
+    return keep, new_keys
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -327,60 +456,92 @@ def deduplicate(articles, threshold=0.6):
 # ═══════════════════════════════════════════════════════════════
 
 
-def categorize(articles):
+def select_top_story(articles, orbit_state):
     """
-    Sort articles into themed sections.
-    Returns an ordered dict of category → list of articles.
+    Pick freshest high-score article from last 24h.
+    Avoids repeating last run's top story title.
+    Updates orbit_state in-place.
     """
+    last_title = orbit_state.get("last_top_story", "")
+
+    # Sort: score desc, then newest first
+    def sort_key(a):
+        dt = a.get("_parsed_dt") or datetime.min.replace(tzinfo=timezone.utc)
+        return (a["score"], dt)
+
+    candidates = sorted(articles, key=sort_key, reverse=True)
+
+    chosen = None
+    for c in candidates:
+        if c["title"] != last_title:
+            chosen = c
+            break
+
+    if chosen is None and candidates:
+        chosen = candidates[0]
+
+    if chosen:
+        orbit_state["last_top_story"] = chosen["title"]
+        orbit_state["last_run"] = datetime.now(timezone.utc).isoformat()
+        vlog(f"  Top story: {chosen['title'][:70]}")
+
+    return chosen
+
+
+def categorize(articles, orbit_state):
     categories = {
-        "🔥 TOP STORY": [],
-        "🚀 NEW LAUNCHES": [],
+        "🔥 TOP STORY":          [],
+        "🚀 NEW LAUNCHES":       [],
         "🆓 FREE & OPEN SOURCE": [],
-        "🔬 RESEARCH": [],
+        "🔬 RESEARCH":           [],
         "💰 INDUSTRY & FUNDING": [],
-        "🌐 COMMUNITY BUZZ": [],
-        "📌 QUICK HITS": [],
+        "🌐 COMMUNITY BUZZ":     [],
+        "📌 QUICK HITS":         [],
     }
 
     if not articles:
         return categories
 
-    # Top story is always the highest scored article
-    categories["🔥 TOP STORY"].append(articles[0])
-    remaining = articles[1:]
+    top = select_top_story(articles, orbit_state)
+    if top:
+        categories["🔥 TOP STORY"].append(top)
 
+    remaining = [a for a in articles if a is not top]
     assigned = set()
 
-    def matches_keywords(article, keywords):
+    def matches(article, keywords):
         text = (article["title"] + " " + article.get("description", "")).lower()
         return any(kw in text for kw in keywords)
 
-    # Pass 1: Categorize by keywords/source
     for i, article in enumerate(remaining):
         source_lower = article["source"].lower()
 
-        if matches_keywords(article, CAT_LAUNCHES) and len(categories["🚀 NEW LAUNCHES"]) < MAX_ARTICLES_PER_SECTION:
-            categories["🚀 NEW LAUNCHES"].append(article)
-            assigned.add(i)
-        elif matches_keywords(article, CAT_OPENSOURCE) and len(categories["🆓 FREE & OPEN SOURCE"]) < MAX_ARTICLES_PER_SECTION:
+        if matches(article, CAT_LAUNCHES):
+            # NEW LAUNCHES: strict <24h (already guaranteed, but explicit)
+            if is_within_hours(article, 24):
+                categories["🚀 NEW LAUNCHES"].append(article)
+                assigned.add(i)
+        elif matches(article, CAT_OPENSOURCE):
             categories["🆓 FREE & OPEN SOURCE"].append(article)
             assigned.add(i)
-        elif matches_keywords(article, CAT_RESEARCH) and len(categories["🔬 RESEARCH"]) < MAX_ARTICLES_PER_SECTION:
+        elif matches(article, CAT_RESEARCH):
             categories["🔬 RESEARCH"].append(article)
             assigned.add(i)
-        elif matches_keywords(article, CAT_INDUSTRY) and len(categories["💰 INDUSTRY & FUNDING"]) < MAX_ARTICLES_PER_SECTION:
+        elif matches(article, CAT_INDUSTRY):
             categories["💰 INDUSTRY & FUNDING"].append(article)
             assigned.add(i)
-        elif source_lower in CAT_COMMUNITY_SOURCES and len(categories["🌐 COMMUNITY BUZZ"]) < MAX_ARTICLES_PER_SECTION:
-            categories["🌐 COMMUNITY BUZZ"].append(article)
-            assigned.add(i)
+        elif source_lower in CAT_COMMUNITY_SOURCES:
+            # COMMUNITY BUZZ: strict <12h
+            if is_within_hours(article, 12):
+                categories["🌐 COMMUNITY BUZZ"].append(article)
+                assigned.add(i)
 
-    # Pass 2: Everything else → Quick Hits (max 10)
     for i, article in enumerate(remaining):
-        if i not in assigned and len(categories["📌 QUICK HITS"]) < 10:
+        if i not in assigned:
             categories["📌 QUICK HITS"].append(article)
 
-    return categories
+    # Drop empty sections
+    return {k: v for k, v in categories.items() if v}
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -389,27 +550,25 @@ def categorize(articles):
 
 
 def score_dots(score):
-    """Render score as colored dots (● per point, max 5)."""
     filled = min(score, 5)
-    empty = 5 - filled
-    dots = '<span style="color:#7c3aed;">●</span>' * filled
-    dots += '<span style="color:#333;">●</span>' * empty
+    empty  = 5 - filled
+    dots  = '<span style="color:#7c3aed;">●</span>' * filled
+    dots += '<span style="color:#333;">●</span>'    * empty
     return f'<span style="font-size:12px;letter-spacing:2px;">{dots}</span>'
 
 
 def render_article_card(article, is_top=False):
-    """Render a single article as an HTML card."""
-    title = html_escape(article["title"])
-    link = html_escape(article["link"])
+    title  = html_escape(article["title"])
+    link   = html_escape(article["link"])
     source = html_escape(article["source"])
-    ago = time_ago(article.get("pub_date", ""))
-    desc = html_escape(article.get("description", "")[:180])
-    score = article.get("score", 0)
+    ts     = format_timestamp(article)
+    desc   = html_escape(article.get("description", "")[:180])
+    score  = article.get("score", 0)
 
     border_color = "#7c3aed" if is_top else "#2a2a2a"
-    bg = "#1e1030" if is_top else "#1a1a1a"
-    title_size = "20px" if is_top else "15px"
-    padding = "24px" if is_top else "18px"
+    bg           = "#1e1030" if is_top else "#1a1a1a"
+    title_size   = "20px"   if is_top else "15px"
+    padding      = "24px"   if is_top else "18px"
 
     top_badge = ""
     if is_top:
@@ -434,7 +593,7 @@ def render_article_card(article, is_top=False):
         <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
             <span style="background:#252525;color:#a78bfa;font-size:11px;font-weight:600;
                          padding:3px 8px;border-radius:4px;">{source}</span>
-            <span style="color:#666;font-size:11px;">{ago}</span>
+            <span style="color:#666;font-size:11px;">{ts}</span>
             {score_dots(score)}
         </div>
     </div>
@@ -442,14 +601,9 @@ def render_article_card(article, is_top=False):
 
 
 def render_section(title, articles, is_top_section=False):
-    """Render a full section with header and article cards."""
     if not articles:
         return ""
-
-    cards = ""
-    for a in articles:
-        cards += render_article_card(a, is_top=is_top_section)
-
+    cards = "".join(render_article_card(a, is_top=is_top_section) for a in articles)
     return f"""
     <div style="margin-bottom:32px;">
         <h2 style="color:#e5e5e5;font-size:18px;font-weight:700;margin:0 0 16px;
@@ -461,8 +615,7 @@ def render_section(title, articles, is_top_section=False):
     """
 
 
-def build_html(categories):
-    """Build the complete HTML email from categorized articles."""
+def build_html(categories, stats):
     today = datetime.now().strftime("%A, %B %d, %Y")
     total = sum(len(v) for v in categories.values())
 
@@ -470,6 +623,13 @@ def build_html(categories):
     for cat_name, cat_articles in categories.items():
         is_top = (cat_name == "🔥 TOP STORY")
         sections_html += render_section(cat_name, cat_articles, is_top_section=is_top)
+
+    stats_line = (
+        f"fetched {stats['fetched']} · "
+        f"{stats['fresh']} fresh · "
+        f"{stats['filtered']} filtered · "
+        f"{total} in digest"
+    )
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -504,8 +664,9 @@ def build_html(categories):
         <p style="color:#444;font-size:11px;margin:0 0 6px;letter-spacing:1px;">
             Built with pure Python. Zero dependencies. Open source.
         </p>
+        <p style="color:#444;font-size:10px;margin:0 0 4px;">{stats_line}</p>
         <p style="color:#333;font-size:10px;margin:0;">
-            🛸 AI-ORBIT &nbsp;·&nbsp; Powered by 13 RSS feeds &nbsp;·&nbsp; Curated by code
+            🛸 AI-ORBIT &nbsp;·&nbsp; Powered by {len(RSS_FEEDS)} RSS feeds &nbsp;·&nbsp; Curated by code
         </p>
     </div>
 
@@ -522,7 +683,6 @@ def build_html(categories):
 
 
 def send_email(html_content):
-    """Send the HTML digest via Gmail SMTP with TLS."""
     if not GMAIL_ADDRESS or not GMAIL_APP_PASSWORD or not RECIPIENT_EMAIL:
         print("\n❌ ERROR: Email credentials not configured!")
         print("   Set GMAIL_ADDRESS, GMAIL_APP_PASSWORD, and RECIPIENT_EMAIL")
@@ -532,10 +692,9 @@ def send_email(html_content):
     today = datetime.now().strftime("%b %d, %Y")
     msg = MIMEMultipart("alternative")
     msg["Subject"] = f"🛸 AI-ORBIT Digest — {today}"
-    msg["From"] = f"AI-ORBIT <{GMAIL_ADDRESS}>"
-    msg["To"] = RECIPIENT_EMAIL
+    msg["From"]    = f"AI-ORBIT <{GMAIL_ADDRESS}>"
+    msg["To"]      = RECIPIENT_EMAIL
 
-    # Plain text fallback
     plain = "AI-ORBIT Digest\nView this email in an HTML-capable client for the full experience."
     msg.attach(MIMEText(plain, "plain", "utf-8"))
     msg.attach(MIMEText(html_content, "html", "utf-8"))
@@ -561,7 +720,7 @@ def send_email(html_content):
 
 
 # ═══════════════════════════════════════════════════════════════
-# 🚀 MAIN ENTRY POINT
+# 🚀 MAIN
 # ═══════════════════════════════════════════════════════════════
 
 
@@ -570,37 +729,80 @@ def main():
     print("  ╔══════════════════════════════════════════════╗")
     print("  ║  🛸 AI-ORBIT — AI News Digest                ║")
     print("  ║  Nothing escapes orbit.                      ║")
+    if VERBOSE:
+        print("  ║  [VERBOSE MODE ON]                           ║")
     print("  ╚══════════════════════════════════════════════╝")
     print()
 
+    # Load persistent state
+    seen_cache  = load_seen_cache()
+    orbit_state = load_orbit_state()
+
     # 1. Fetch
     articles = fetch_all_feeds()
+    total_fetched = len(articles)
     if not articles:
         log("No articles fetched from any feed. Exiting.")
         sys.exit(1)
 
-    # 2. Score
+    # 2. Freshness filter — strict 24h
+    articles, filtered_count = filter_fresh(articles)
+    total_fresh = len(articles)
+
+    if total_fresh < 5:
+        print()
+        print(f"  ⚠️  WARNING: Only {total_fresh} fresh article(s) found in the last 24h (minimum: 5).")
+        print("   Feeds may be slow or all recent items already seen.")
+        print("   Exiting without sending.")
+        sys.exit(0)
+
+    # 3. Score
     articles = score_all(articles)
-    log(f"Scored all articles (top score: {articles[0]['score']})")
+    log(f"Scored {len(articles)} articles (top score: {articles[0]['score']})")
 
-    # 3. Deduplicate
-    articles = deduplicate(articles)
+    # 4. Dedup (cross-run + within-run)
+    articles, new_keys = deduplicate(articles, seen_cache)
 
-    # 4. Categorize
-    categories = categorize(articles)
+    if len(articles) < 5:
+        print()
+        print(f"  ⚠️  WARNING: Only {len(articles)} unique article(s) after dedup (minimum: 5).")
+        print("   Exiting without sending.")
+        # Still update cache so we don't retry the same articles next run
+        now_iso = datetime.now(timezone.utc).isoformat()
+        for url_key, title_key in new_keys:
+            seen_cache[url_key]   = now_iso
+            seen_cache[title_key] = now_iso
+        save_seen_cache(seen_cache)
+        sys.exit(0)
 
-    # Print summary
+    # 5. Categorize (no section caps, top-story rotation, community buzz <12h)
+    categories = categorize(articles, orbit_state)
+
+    # 6. Persist state + cache
+    now_iso = datetime.now(timezone.utc).isoformat()
+    for url_key, title_key in new_keys:
+        seen_cache[url_key]   = now_iso
+        seen_cache[title_key] = now_iso
+    save_seen_cache(seen_cache)
+    save_orbit_state(orbit_state)
+
+    # Summary
+    total_shown = sum(len(v) for v in categories.values())
     print()
+    log("─── Section breakdown ───────────────────────")
     for cat, items in categories.items():
-        if items:
-            log(f"{cat}: {len(items)} articles")
+        log(f"  {cat}: {len(items)} articles")
+    log("─────────────────────────────────────────────")
+    log(f"Fetched: {total_fetched}  |  Fresh (<24h): {total_fresh}  |  Filtered: {filtered_count}  |  In digest: {total_shown}")
     print()
 
-    # 5. Build HTML
-    html = build_html(categories)
-    log(f"HTML email built ({len(html):,} bytes)")
+    stats = {"fetched": total_fetched, "fresh": total_fresh, "filtered": filtered_count}
 
-    # 6. Send
+    # 7. Build HTML
+    html = build_html(categories, stats)
+    log(f"HTML built ({len(html):,} bytes)")
+
+    # 8. Send
     success = send_email(html)
 
     if success:
@@ -619,33 +821,28 @@ if __name__ == "__main__":
 # 📦 GITHUB ACTIONS WORKFLOW
 # ═══════════════════════════════════════════════════════════════
 #
-# Save the following as .github/workflows/daily.yml
+# Save as .github/workflows/daily.yml
 #
 # ---
 # name: 🛸 AI-ORBIT Daily Digest
 #
 # on:
 #   schedule:
-#     # 8:00 AM IST = 2:30 AM UTC
-#     - cron: "30 2 * * *"
+#     - cron: "30 2 * * *"   # 8:00 AM IST
 #   workflow_dispatch:
 #
 # jobs:
 #   send-digest:
 #     runs-on: ubuntu-latest
 #     steps:
-#       - name: Checkout repository
-#         uses: actions/checkout@v4
-#
-#       - name: Set up Python
-#         uses: actions/setup-python@v5
+#       - uses: actions/checkout@v4
+#       - uses: actions/setup-python@v5
 #         with:
 #           python-version: "3.12"
-#
 #       - name: Run AI-ORBIT
 #         env:
-#           GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
+#           GMAIL_ADDRESS:      ${{ secrets.GMAIL_ADDRESS }}
 #           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
-#           RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
+#           RECIPIENT_EMAIL:    ${{ secrets.RECIPIENT_EMAIL }}
 #         run: python main.py
 # ---
