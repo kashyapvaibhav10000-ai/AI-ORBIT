@@ -552,8 +552,8 @@ def categorize(articles, orbit_state):
 def score_dots(score):
     filled = min(score, 5)
     empty  = 5 - filled
-    dots  = '<span style="color:#7c3aed;">●</span>' * filled
-    dots += '<span style="color:#333;">●</span>'    * empty
+    dots  = '<span style="color:#C9A84C;">●</span>' * filled
+    dots += '<span style="color:#C8B97A;opacity:0.3;">●</span>' * empty
     return f'<span style="font-size:12px;letter-spacing:2px;">{dots}</span>'
 
 
@@ -565,35 +565,74 @@ def render_article_card(article, is_top=False):
     desc   = html_escape(article.get("description", "")[:180])
     score  = article.get("score", 0)
 
-    border_color = "#7c3aed" if is_top else "#2a2a2a"
-    bg           = "#1e1030" if is_top else "#1a1a1a"
-    title_size   = "20px"   if is_top else "15px"
-    padding      = "24px"   if is_top else "18px"
+    if is_top:
+        # Light: cream card with navy border + gold gradient badge
+        # Dark: deep navy card with gold border
+        border_light = "#1B2A4A"
+        bg_light     = "#FFFEF5"
+        border_dark  = "#C9A84C"
+        bg_dark      = "#0F1C33"
+        title_size   = "20px"
+        padding      = "24px"
+    else:
+        border_light = "#E8D9A0"
+        bg_light     = "#FEFCE8"
+        border_dark  = "#243555"
+        bg_dark      = "#162035"
+        title_size   = "15px"
+        padding      = "18px"
 
     top_badge = ""
     if is_top:
         top_badge = """
-        <div style="display:inline-block;background:linear-gradient(135deg,#7c3aed,#a855f7);
-                     color:#fff;font-size:10px;font-weight:700;letter-spacing:1.5px;
-                     padding:3px 10px;border-radius:4px;margin-bottom:12px;text-transform:uppercase;">
-            TOP STORY
+        <div style="display:inline-block;
+                    background:linear-gradient(135deg,#1B2A4A,#243555);
+                    color:#C9A84C;font-size:10px;font-weight:700;letter-spacing:1.5px;
+                    padding:3px 10px;border-radius:4px;margin-bottom:12px;text-transform:uppercase;
+                    border:1px solid #C9A84C;">
+            ★ TOP STORY
         </div><br>
         """
 
     return f"""
-    <div style="background:{bg};border:1px solid {border_color};border-radius:12px;
-                padding:{padding};margin-bottom:12px;transition:all 0.2s;">
+    <!--[if !mso]><!-->
+    <style>
+      @media (prefers-color-scheme: dark) {{
+        .card-{id(article) % 999999} {{
+          background: {bg_dark} !important;
+          border-color: {border_dark} !important;
+        }}
+        .card-{id(article) % 999999} .card-title {{
+          color: #F5EDCC !important;
+        }}
+        .card-{id(article) % 999999} .card-desc {{
+          color: #9EB3D4 !important;
+        }}
+        .card-{id(article) % 999999} .card-source {{
+          background: #1B2A4A !important;
+          color: #C9A84C !important;
+        }}
+        .card-{id(article) % 999999} .card-ts {{
+          color: #7A96B8 !important;
+        }}
+      }}
+    </style>
+    <!--<![endif]-->
+    <div class="card-{id(article) % 999999}"
+         style="background:{bg_light};border:1px solid {border_light};border-radius:12px;
+                padding:{padding};margin-bottom:12px;">
         {top_badge}
-        <a href="{link}" target="_blank"
-           style="color:#e5e5e5;text-decoration:none;font-size:{title_size};
+        <a href="{link}" target="_blank" class="card-title"
+           style="color:#1B2A4A;text-decoration:none;font-size:{title_size};
                   font-weight:600;line-height:1.4;display:block;margin-bottom:8px;">
             {title}
         </a>
-        {"<p style='color:#999;font-size:13px;line-height:1.5;margin:0 0 10px;'>" + desc + "</p>" if desc and is_top else ""}
+        {"<p class='card-desc' style='color:#4A5568;font-size:13px;line-height:1.5;margin:0 0 10px;'>" + desc + "</p>" if desc and is_top else ""}
         <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
-            <span style="background:#252525;color:#a78bfa;font-size:11px;font-weight:600;
+            <span class="card-source"
+                  style="background:#EEE8C8;color:#1B2A4A;font-size:11px;font-weight:600;
                          padding:3px 8px;border-radius:4px;">{source}</span>
-            <span style="color:#666;font-size:11px;">{ts}</span>
+            <span class="card-ts" style="color:#7A8CA0;font-size:11px;">{ts}</span>
             {score_dots(score)}
         </div>
     </div>
@@ -605,9 +644,17 @@ def render_section(title, articles, is_top_section=False):
         return ""
     cards = "".join(render_article_card(a, is_top=is_top_section) for a in articles)
     return f"""
+    <!--[if !mso]><!-->
+    <style>
+      @media (prefers-color-scheme: dark) {{
+        .section-head {{ color: #F5EDCC !important; border-color: #243555 !important; }}
+      }}
+    </style>
+    <!--<![endif]-->
     <div style="margin-bottom:32px;">
-        <h2 style="color:#e5e5e5;font-size:18px;font-weight:700;margin:0 0 16px;
-                   padding-bottom:10px;border-bottom:1px solid #252525;">
+        <h2 class="section-head"
+            style="color:#1B2A4A;font-size:18px;font-weight:700;margin:0 0 16px;
+                   padding-bottom:10px;border-bottom:2px solid #C9A84C;">
             {title}
         </h2>
         {cards}
@@ -636,38 +683,124 @@ def build_html(categories, stats):
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="color-scheme" content="light dark">
+<meta name="supported-color-schemes" content="light dark">
 <title>AI-ORBIT Digest</title>
+<style>
+  /* ── Reset & base ── */
+  * {{ box-sizing: border-box; }}
+  body {{
+    margin: 0; padding: 0;
+    background: #FDF8E1;
+    font-family: 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    color: #1B2A4A;
+  }}
+  .wrapper {{
+    max-width: 640px;
+    margin: 0 auto;
+    padding: 16px;
+    width: 100%;
+  }}
+  /* ── Header ── */
+  .header {{
+    text-align: center;
+    padding: 40px 20px 28px;
+    border-bottom: 2px solid #C9A84C;
+    margin-bottom: 32px;
+  }}
+  .logo-emoji {{ font-size: 52px; margin-bottom: 4px; }}
+  .logo-title {{
+    margin: 0;
+    font-size: 38px;
+    font-weight: 900;
+    letter-spacing: -1px;
+    background: linear-gradient(135deg, #1B2A4A 0%, #2E4A7A 50%, #C9A84C 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }}
+  .logo-tagline {{
+    color: #4A6080;
+    font-size: 12px;
+    margin: 8px 0 0;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    font-weight: 600;
+  }}
+  .logo-date {{
+    color: #7A8CA0;
+    font-size: 12px;
+    margin: 10px 0 0;
+  }}
+  .gold-rule {{
+    display: inline-block;
+    width: 40px;
+    height: 2px;
+    background: #C9A84C;
+    margin: 12px 0 0;
+  }}
+  /* ── Footer ── */
+  .footer {{
+    text-align: center;
+    padding: 28px 20px;
+    border-top: 2px solid #C9A84C;
+    margin-top: 16px;
+  }}
+  .footer p {{
+    color: #7A8CA0;
+    font-size: 11px;
+    margin: 0 0 4px;
+    letter-spacing: 0.5px;
+  }}
+  .footer p:last-child {{ margin: 0; color: #A0907A; }}
+
+  /* ── Responsive ── */
+  @media screen and (max-width: 480px) {{
+    .wrapper {{ padding: 10px; }}
+    .logo-title {{ font-size: 28px; }}
+    .logo-emoji {{ font-size: 40px; }}
+    .header {{ padding: 28px 12px 20px; }}
+  }}
+
+  /* ── Dark mode ── */
+  @media (prefers-color-scheme: dark) {{
+    body {{ background: #0C1525 !important; color: #F5EDCC !important; }}
+    .wrapper {{ background: #0C1525; }}
+    .header {{ border-color: #C9A84C !important; }}
+    .logo-title {{
+      background: linear-gradient(135deg, #7BA7D4 0%, #A0C4F0 50%, #C9A84C 100%) !important;
+      -webkit-background-clip: text !important;
+      -webkit-text-fill-color: transparent !important;
+      background-clip: text !important;
+    }}
+    .logo-tagline {{ color: #7A9FCC !important; }}
+    .logo-date {{ color: #5A7A9C !important; }}
+    .footer {{ border-color: #C9A84C !important; }}
+    .footer p {{ color: #5A7A9C !important; }}
+    .footer p:last-child {{ color: #7A6A4A !important; }}
+  }}
+</style>
 </head>
-<body style="margin:0;padding:0;background:#0d0d0d;font-family:'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;">
-<div style="max-width:640px;margin:0 auto;padding:20px;">
+<body>
+<div class="wrapper">
 
     <!-- ═══ HEADER ═══ -->
-    <div style="text-align:center;padding:40px 20px 32px;border-bottom:1px solid #1a1a1a;margin-bottom:32px;">
-        <div style="font-size:48px;margin-bottom:4px;">🛸</div>
-        <h1 style="margin:0;font-size:36px;font-weight:800;
-                   background:linear-gradient(135deg,#7c3aed,#a855f7,#c084fc);
-                   -webkit-background-clip:text;-webkit-text-fill-color:transparent;
-                   background-clip:text;letter-spacing:-0.5px;">
-            AI-ORBIT
-        </h1>
-        <p style="color:#666;font-size:13px;margin:8px 0 0;letter-spacing:3px;text-transform:uppercase;">
-            Nothing escapes orbit.
-        </p>
-        <p style="color:#555;font-size:12px;margin:12px 0 0;">{today} &nbsp;·&nbsp; {total} articles curated</p>
+    <div class="header">
+        <div class="logo-emoji">🛸</div>
+        <h1 class="logo-title">AI-ORBIT</h1>
+        <p class="logo-tagline">Nothing escapes orbit.</p>
+        <div class="gold-rule"></div>
+        <p class="logo-date">{today} &nbsp;·&nbsp; {total} articles curated</p>
     </div>
 
     <!-- ═══ CONTENT ═══ -->
     {sections_html}
 
     <!-- ═══ FOOTER ═══ -->
-    <div style="text-align:center;padding:32px 20px;border-top:1px solid #1a1a1a;margin-top:16px;">
-        <p style="color:#444;font-size:11px;margin:0 0 6px;letter-spacing:1px;">
-            Built with pure Python. Zero dependencies. Open source.
-        </p>
-        <p style="color:#444;font-size:10px;margin:0 0 4px;">{stats_line}</p>
-        <p style="color:#333;font-size:10px;margin:0;">
-            🛸 AI-ORBIT &nbsp;·&nbsp; Powered by {len(RSS_FEEDS)} RSS feeds &nbsp;·&nbsp; Curated by code
-        </p>
+    <div class="footer">
+        <p>Built with pure Python &nbsp;·&nbsp; Zero dependencies &nbsp;·&nbsp; Open source</p>
+        <p>{stats_line}</p>
+        <p>🛸 AI-ORBIT &nbsp;·&nbsp; Powered by {len(RSS_FEEDS)} RSS feeds &nbsp;·&nbsp; Curated by code</p>
     </div>
 
 </div>
