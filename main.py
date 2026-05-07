@@ -552,9 +552,9 @@ def categorize(articles, orbit_state):
 def score_dots(score):
     filled = min(score, 5)
     empty  = 5 - filled
-    dots  = '<span style="color:#C9A84C;">●</span>' * filled
-    dots += '<span style="color:#C8B97A;opacity:0.3;">●</span>' * empty
-    return f'<span style="font-size:12px;letter-spacing:2px;">{dots}</span>'
+    dots  = '<span style="color:#C9A84C;font-size:10px;">⬤</span>' * filled
+    dots += '<span style="color:#C9A84C;font-size:10px;opacity:0.2;">⬤</span>' * empty
+    return f'<span style="letter-spacing:3px;display:inline-flex;align-items:center;gap:1px;">{dots}</span>'
 
 
 def render_article_card(article, is_top=False):
@@ -562,77 +562,122 @@ def render_article_card(article, is_top=False):
     link   = html_escape(article["link"])
     source = html_escape(article["source"])
     ts     = format_timestamp(article)
-    desc   = html_escape(article.get("description", "")[:180])
+    desc   = html_escape(article.get("description", "")[:200])
     score  = article.get("score", 0)
+    cid    = id(article) % 999999
 
     if is_top:
-        # Light: cream card with navy border + gold gradient badge
-        # Dark: deep navy card with gold border
-        border_light = "#1B2A4A"
-        bg_light     = "#FFFEF5"
-        border_dark  = "#C9A84C"
-        bg_dark      = "#0F1C33"
-        title_size   = "20px"
-        padding      = "24px"
+        title_size = "19px"
+        lh         = "1.5"
+        padding    = "28px"
+        mb         = "16px"
     else:
-        border_light = "#E8D9A0"
-        bg_light     = "#FEFCE8"
-        border_dark  = "#243555"
-        bg_dark      = "#162035"
-        title_size   = "15px"
-        padding      = "18px"
+        title_size = "15px"
+        lh         = "1.45"
+        padding    = "20px 22px"
+        mb         = "10px"
 
     top_badge = ""
     if is_top:
         top_badge = """
-        <div style="display:inline-block;
-                    background:linear-gradient(135deg,#1B2A4A,#243555);
-                    color:#C9A84C;font-size:10px;font-weight:700;letter-spacing:1.5px;
-                    padding:3px 10px;border-radius:4px;margin-bottom:12px;text-transform:uppercase;
-                    border:1px solid #C9A84C;">
-            ★ TOP STORY
+        <div style="display:inline-flex;align-items:center;gap:6px;
+                    background:linear-gradient(135deg,#1B2A4A 0%,#2C3E6B 100%);
+                    color:#C9A84C;font-size:9px;font-weight:700;letter-spacing:2px;
+                    padding:5px 12px;border-radius:20px;margin-bottom:16px;
+                    text-transform:uppercase;border:1px solid rgba(201,168,76,0.4);
+                    font-family:'Noto Serif',Georgia,serif;">
+            ★ &nbsp;TOP STORY
         </div><br>
         """
 
+    desc_html = ""
+    if desc and is_top:
+        desc_html = f"""
+        <p class="card-desc-{cid}"
+           style="color:#4A5E78;font-size:14px;line-height:1.65;margin:0 0 16px;
+                  font-family:'Noto Serif',Georgia,serif;font-style:italic;">
+            {desc}
+        </p>"""
+
     return f"""
-    <!--[if !mso]><!-->
     <style>
+      .card-{cid} {{
+        background: rgba(255,253,240,0.75);
+        border: 1px solid rgba(201,168,76,0.25);
+        border-radius: 18px;
+        padding: {padding};
+        margin-bottom: 14px;
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        box-shadow:
+          0 1px 2px rgba(27,42,74,0.04),
+          0 4px 16px rgba(27,42,74,0.06),
+          0 0 0 0.5px rgba(201,168,76,0.15) inset;
+        transition: box-shadow 0.2s ease;
+      }}
+      {''.join([
+        f'.card-{cid} {{ border-color: rgba(201,168,76,0.45) !important; box-shadow: 0 2px 4px rgba(27,42,74,0.1), 0 8px 32px rgba(27,42,74,0.1), 0 0 0 0.5px rgba(201,168,76,0.25) inset !important; }}' if is_top else ''
+      ])}
+      .card-title-{cid} {{
+        color: #1B2A4A;
+        text-decoration: none;
+        font-size: {title_size};
+        font-weight: 700;
+        line-height: {lh};
+        display: block;
+        margin-bottom: {mb};
+        font-family: 'Noto Serif', Georgia, serif;
+        letter-spacing: -0.2px;
+      }}
+      .card-title-{cid}:hover {{ color: #2E4A7A; }}
+      .card-meta-{cid} {{
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+      }}
+      .card-source-{cid} {{
+        background: rgba(27,42,74,0.07);
+        color: #1B2A4A;
+        font-size: 11px;
+        font-weight: 600;
+        padding: 4px 10px;
+        border-radius: 20px;
+        letter-spacing: 0.3px;
+        font-family: 'Noto Serif', Georgia, serif;
+        border: 1px solid rgba(27,42,74,0.1);
+      }}
+      .card-ts-{cid} {{
+        color: #8A9CB0;
+        font-size: 11px;
+        font-family: 'Noto Serif', Georgia, serif;
+      }}
       @media (prefers-color-scheme: dark) {{
-        .card-{id(article) % 999999} {{
-          background: {bg_dark} !important;
-          border-color: {border_dark} !important;
+        .card-{cid} {{
+          background: rgba(18,30,54,0.82) !important;
+          border-color: rgba(201,168,76,0.2) !important;
+          box-shadow:
+            0 1px 2px rgba(0,0,0,0.2),
+            0 4px 20px rgba(0,0,0,0.3),
+            0 0 0 0.5px rgba(201,168,76,0.12) inset !important;
         }}
-        .card-{id(article) % 999999} .card-title {{
-          color: #F5EDCC !important;
-        }}
-        .card-{id(article) % 999999} .card-desc {{
-          color: #9EB3D4 !important;
-        }}
-        .card-{id(article) % 999999} .card-source {{
-          background: #1B2A4A !important;
+        .card-title-{cid} {{ color: #EDE4C8 !important; }}
+        .card-desc-{cid} {{ color: #8AAAC8 !important; }}
+        .card-source-{cid} {{
+          background: rgba(201,168,76,0.1) !important;
           color: #C9A84C !important;
+          border-color: rgba(201,168,76,0.2) !important;
         }}
-        .card-{id(article) % 999999} .card-ts {{
-          color: #7A96B8 !important;
-        }}
+        .card-ts-{cid} {{ color: #556A80 !important; }}
       }}
     </style>
-    <!--<![endif]-->
-    <div class="card-{id(article) % 999999}"
-         style="background:{bg_light};border:1px solid {border_light};border-radius:12px;
-                padding:{padding};margin-bottom:12px;">
+    <div class="card-{cid}">
         {top_badge}
-        <a href="{link}" target="_blank" class="card-title"
-           style="color:#1B2A4A;text-decoration:none;font-size:{title_size};
-                  font-weight:600;line-height:1.4;display:block;margin-bottom:8px;">
-            {title}
-        </a>
-        {"<p class='card-desc' style='color:#4A5568;font-size:13px;line-height:1.5;margin:0 0 10px;'>" + desc + "</p>" if desc and is_top else ""}
-        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
-            <span class="card-source"
-                  style="background:#EEE8C8;color:#1B2A4A;font-size:11px;font-weight:600;
-                         padding:3px 8px;border-radius:4px;">{source}</span>
-            <span class="card-ts" style="color:#7A8CA0;font-size:11px;">{ts}</span>
+        <a href="{link}" target="_blank" class="card-title-{cid}">{title}</a>
+        {desc_html}
+        <div class="card-meta-{cid}">
+            <span class="card-source-{cid}">{source}</span>
+            <span class="card-ts-{cid}">{ts}</span>
             {score_dots(score)}
         </div>
     </div>
@@ -644,19 +689,26 @@ def render_section(title, articles, is_top_section=False):
         return ""
     cards = "".join(render_article_card(a, is_top=is_top_section) for a in articles)
     return f"""
-    <!--[if !mso]><!-->
     <style>
       @media (prefers-color-scheme: dark) {{
-        .section-head {{ color: #F5EDCC !important; border-color: #243555 !important; }}
+        .sec-head {{ color: #EDE4C8 !important; }}
+        .sec-head-rule {{ background: linear-gradient(90deg,#C9A84C,rgba(201,168,76,0)) !important; }}
       }}
     </style>
-    <!--<![endif]-->
-    <div style="margin-bottom:32px;">
-        <h2 class="section-head"
-            style="color:#1B2A4A;font-size:18px;font-weight:700;margin:0 0 16px;
-                   padding-bottom:10px;border-bottom:2px solid #C9A84C;">
-            {title}
-        </h2>
+    <div style="margin-bottom: 40px;">
+        <div style="display:flex;align-items:center;gap:14px;margin-bottom:20px;">
+            <h2 class="sec-head"
+                style="color:#1B2A4A;font-size:13px;font-weight:700;margin:0;
+                       letter-spacing:2px;text-transform:uppercase;white-space:nowrap;
+                       font-family:'Noto Serif',Georgia,serif;">
+                {title}
+            </h2>
+            <div class="sec-head-rule"
+                 style="flex:1;height:1px;
+                        background:linear-gradient(90deg,rgba(201,168,76,0.6),rgba(201,168,76,0));
+                        border-radius:2px;">
+            </div>
+        </div>
         {cards}
     </div>
     """
@@ -686,110 +738,182 @@ def build_html(categories, stats):
 <meta name="color-scheme" content="light dark">
 <meta name="supported-color-schemes" content="light dark">
 <title>AI-ORBIT Digest</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif:ital,wght@0,400;0,600;0,700;0,900;1,400;1,600&display=swap" rel="stylesheet">
 <style>
-  /* ── Reset & base ── */
-  * {{ box-sizing: border-box; }}
+  *, *::before, *::after {{ box-sizing: border-box; }}
+
   body {{
-    margin: 0; padding: 0;
-    background: #FDF8E1;
-    font-family: 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    margin: 0;
+    padding: 0;
+    background: #FBF6E2;
+    font-family: 'Noto Serif', Georgia, 'Times New Roman', serif;
     color: #1B2A4A;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }}
+
+  .page-bg {{
+    min-height: 100vh;
+    background:
+      radial-gradient(ellipse at 20% 0%, rgba(201,168,76,0.12) 0%, transparent 60%),
+      radial-gradient(ellipse at 80% 100%, rgba(27,42,74,0.06) 0%, transparent 60%),
+      #FBF6E2;
+    padding: 32px 16px 48px;
+  }}
+
   .wrapper {{
-    max-width: 640px;
+    max-width: 620px;
     margin: 0 auto;
-    padding: 16px;
     width: 100%;
   }}
+
   /* ── Header ── */
   .header {{
     text-align: center;
-    padding: 40px 20px 28px;
-    border-bottom: 2px solid #C9A84C;
-    margin-bottom: 32px;
+    padding: 48px 24px 40px;
+    margin-bottom: 40px;
+    background: rgba(255,253,242,0.7);
+    border-radius: 24px;
+    border: 1px solid rgba(201,168,76,0.2);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    box-shadow:
+      0 2px 4px rgba(27,42,74,0.04),
+      0 8px 32px rgba(27,42,74,0.06),
+      0 0 0 0.5px rgba(255,255,255,0.6) inset;
   }}
-  .logo-emoji {{ font-size: 52px; margin-bottom: 4px; }}
+
+  .logo-emoji {{
+    font-size: 56px;
+    line-height: 1;
+    margin-bottom: 16px;
+    display: block;
+  }}
+
   .logo-title {{
-    margin: 0;
-    font-size: 38px;
+    margin: 0 0 10px;
+    font-size: 42px;
     font-weight: 900;
-    letter-spacing: -1px;
-    background: linear-gradient(135deg, #1B2A4A 0%, #2E4A7A 50%, #C9A84C 100%);
+    letter-spacing: -1.5px;
+    line-height: 1;
+    background: linear-gradient(135deg, #1B2A4A 0%, #2E4A7A 45%, #C9A84C 100%);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
+    font-family: 'Noto Serif', Georgia, serif;
   }}
+
+  .logo-divider {{
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    margin: 14px 0;
+  }}
+  .logo-divider-line {{
+    width: 48px; height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(201,168,76,0.6));
+    border-radius: 1px;
+  }}
+  .logo-divider-line.r {{
+    background: linear-gradient(90deg, rgba(201,168,76,0.6), transparent);
+  }}
+  .logo-divider-dot {{
+    width: 5px; height: 5px;
+    background: #C9A84C;
+    border-radius: 50%;
+  }}
+
   .logo-tagline {{
     color: #4A6080;
-    font-size: 12px;
-    margin: 8px 0 0;
-    letter-spacing: 3px;
+    font-size: 11px;
+    margin: 0 0 12px;
+    letter-spacing: 3.5px;
     text-transform: uppercase;
     font-weight: 600;
+    font-family: 'Noto Serif', Georgia, serif;
   }}
+
   .logo-date {{
     color: #7A8CA0;
-    font-size: 12px;
-    margin: 10px 0 0;
+    font-size: 13px;
+    margin: 0;
+    font-style: italic;
+    font-family: 'Noto Serif', Georgia, serif;
   }}
-  .gold-rule {{
-    display: inline-block;
-    width: 40px;
-    height: 2px;
-    background: #C9A84C;
-    margin: 12px 0 0;
-  }}
+
   /* ── Footer ── */
   .footer {{
     text-align: center;
-    padding: 28px 20px;
-    border-top: 2px solid #C9A84C;
-    margin-top: 16px;
+    padding: 28px 20px 24px;
+    margin-top: 8px;
+    border-top: 1px solid rgba(201,168,76,0.3);
   }}
+
   .footer p {{
-    color: #7A8CA0;
+    color: #9AA8B8;
     font-size: 11px;
-    margin: 0 0 4px;
-    letter-spacing: 0.5px;
+    margin: 0 0 5px;
+    letter-spacing: 0.3px;
+    font-family: 'Noto Serif', Georgia, serif;
   }}
-  .footer p:last-child {{ margin: 0; color: #A0907A; }}
+  .footer p:last-child {{ margin: 0; color: #B8A888; }}
 
   /* ── Responsive ── */
   @media screen and (max-width: 480px) {{
-    .wrapper {{ padding: 10px; }}
-    .logo-title {{ font-size: 28px; }}
-    .logo-emoji {{ font-size: 40px; }}
-    .header {{ padding: 28px 12px 20px; }}
+    .page-bg {{ padding: 16px 10px 36px; }}
+    .logo-title {{ font-size: 32px; }}
+    .logo-emoji {{ font-size: 44px; }}
+    .header {{ padding: 32px 16px 28px; border-radius: 18px; }}
   }}
 
   /* ── Dark mode ── */
   @media (prefers-color-scheme: dark) {{
-    body {{ background: #0C1525 !important; color: #F5EDCC !important; }}
-    .wrapper {{ background: #0C1525; }}
-    .header {{ border-color: #C9A84C !important; }}
+    body {{ background: #0A1220 !important; color: #EDE4C8 !important; }}
+    .page-bg {{
+      background:
+        radial-gradient(ellipse at 20% 0%, rgba(201,168,76,0.08) 0%, transparent 60%),
+        radial-gradient(ellipse at 80% 100%, rgba(46,74,122,0.15) 0%, transparent 60%),
+        #0A1220 !important;
+    }}
+    .header {{
+      background: rgba(15,26,48,0.85) !important;
+      border-color: rgba(201,168,76,0.15) !important;
+      box-shadow:
+        0 2px 4px rgba(0,0,0,0.2),
+        0 8px 32px rgba(0,0,0,0.3),
+        0 0 0 0.5px rgba(255,255,255,0.04) inset !important;
+    }}
     .logo-title {{
-      background: linear-gradient(135deg, #7BA7D4 0%, #A0C4F0 50%, #C9A84C 100%) !important;
+      background: linear-gradient(135deg, #8BBCE0 0%, #A8D0F0 45%, #C9A84C 100%) !important;
       -webkit-background-clip: text !important;
       -webkit-text-fill-color: transparent !important;
       background-clip: text !important;
     }}
-    .logo-tagline {{ color: #7A9FCC !important; }}
-    .logo-date {{ color: #5A7A9C !important; }}
-    .footer {{ border-color: #C9A84C !important; }}
-    .footer p {{ color: #5A7A9C !important; }}
-    .footer p:last-child {{ color: #7A6A4A !important; }}
+    .logo-tagline {{ color: #5A80A8 !important; }}
+    .logo-date {{ color: #4A6880 !important; }}
+    .footer {{ border-color: rgba(201,168,76,0.15) !important; }}
+    .footer p {{ color: #3A5068 !important; }}
+    .footer p:last-child {{ color: #5A4A2A !important; }}
   }}
 </style>
 </head>
 <body>
+<div class="page-bg">
 <div class="wrapper">
 
     <!-- ═══ HEADER ═══ -->
     <div class="header">
-        <div class="logo-emoji">🛸</div>
+        <span class="logo-emoji">🛸</span>
         <h1 class="logo-title">AI-ORBIT</h1>
         <p class="logo-tagline">Nothing escapes orbit.</p>
-        <div class="gold-rule"></div>
+        <div class="logo-divider">
+            <div class="logo-divider-line"></div>
+            <div class="logo-divider-dot"></div>
+            <div class="logo-divider-line r"></div>
+        </div>
         <p class="logo-date">{today} &nbsp;·&nbsp; {total} articles curated</p>
     </div>
 
@@ -803,6 +927,7 @@ def build_html(categories, stats):
         <p>🛸 AI-ORBIT &nbsp;·&nbsp; Powered by {len(RSS_FEEDS)} RSS feeds &nbsp;·&nbsp; Curated by code</p>
     </div>
 
+</div>
 </div>
 </body>
 </html>"""
