@@ -643,7 +643,7 @@ def render_article_card(article, is_top=False):
 def render_section(title, articles, is_top_section=False):
     if not articles:
         return ""
-    cards = "".join(render_article_card(a, is_top=is_top_section) for a in articles)
+    cards = "".join(render_article_card(a, is_top=is_top_section) for a in articles[:9])
     header = (
         '<table cellpadding="0" cellspacing="0" border="0" width="100%"'
         ' style="margin-bottom:18px;">'
