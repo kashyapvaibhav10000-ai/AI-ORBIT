@@ -687,29 +687,87 @@ def render_article_card(article, is_top=False):
 def render_section(title, articles, is_top_section=False):
     if not articles:
         return ""
-    cards = "".join(render_article_card(a, is_top=is_top_section) for a in articles)
+
+    import hashlib as _hl
+    sid = _hl.md5(title.encode()).hexdigest()[:8]
+
+    SHOW_FIRST = 1 if is_top_section else 3
+    visible_articles  = articles[:SHOW_FIRST]
+    hidden_articles   = articles[SHOW_FIRST:]
+
+    visible_cards = "".join(render_article_card(a, is_top=is_top_section) for a in visible_articles)
+    hidden_cards  = "".join(render_article_card(a, is_top=False)          for a in hidden_articles)
+
+    hidden_count = len(hidden_articles)
+    toggle_btn = ""
+    if hidden_count > 0:
+        toggle_btn = f"""
+        <button onclick="(function(){{
+            var el = document.getElementById('more-{sid}');
+            var btn = document.getElementById('btn-{sid}');
+            var expanded = el.style.display !== 'none';
+            el.style.display = expanded ? 'none' : 'block';
+            btn.innerHTML = expanded
+                ? '&#43; Show {hidden_count} more'
+                : '&#8722; Show less';
+        }})()"
+            id="btn-{sid}"
+            style="display:block;width:100%;margin-top:8px;padding:11px 20px;
+                   background:rgba(201,168,76,0.08);
+                   border:1px solid rgba(201,168,76,0.3);
+                   border-radius:14px;
+                   color:#7A6830;font-size:12px;font-weight:600;
+                   letter-spacing:1.5px;text-transform:uppercase;
+                   font-family:'Noto Serif',Georgia,serif;
+                   cursor:pointer;text-align:center;
+                   transition:background 0.15s,border-color 0.15s;"
+            onmouseover="this.style.background='rgba(201,168,76,0.15)';this.style.borderColor='rgba(201,168,76,0.5)';"
+            onmouseout="this.style.background='rgba(201,168,76,0.08)';this.style.borderColor='rgba(201,168,76,0.3)';">
+            &#43; Show {hidden_count} more
+        </button>
+        <style>
+          @media (prefers-color-scheme: dark) {{
+            #btn-{sid} {{
+              background: rgba(201,168,76,0.06) !important;
+              border-color: rgba(201,168,76,0.2) !important;
+              color: #9A8040 !important;
+            }}
+            #btn-{sid}:hover {{
+              background: rgba(201,168,76,0.12) !important;
+              border-color: rgba(201,168,76,0.4) !important;
+            }}
+          }}
+        </style>
+        """
+
+    hidden_block = ""
+    if hidden_count > 0:
+        hidden_block = f'<div id="more-{sid}" style="display:none;">{hidden_cards}</div>'
+
     return f"""
     <style>
       @media (prefers-color-scheme: dark) {{
-        .sec-head {{ color: #EDE4C8 !important; }}
-        .sec-head-rule {{ background: linear-gradient(90deg,#C9A84C,rgba(201,168,76,0)) !important; }}
+        .sec-head-{sid} {{ color: #EDE4C8 !important; }}
+        .sec-head-rule-{sid} {{ background: linear-gradient(90deg,#C9A84C,rgba(201,168,76,0)) !important; }}
       }}
     </style>
     <div style="margin-bottom: 40px;">
         <div style="display:flex;align-items:center;gap:14px;margin-bottom:20px;">
-            <h2 class="sec-head"
+            <h2 class="sec-head-{sid}"
                 style="color:#1B2A4A;font-size:13px;font-weight:700;margin:0;
                        letter-spacing:2px;text-transform:uppercase;white-space:nowrap;
                        font-family:'Noto Serif',Georgia,serif;">
                 {title}
             </h2>
-            <div class="sec-head-rule"
+            <div class="sec-head-rule-{sid}"
                  style="flex:1;height:1px;
                         background:linear-gradient(90deg,rgba(201,168,76,0.6),rgba(201,168,76,0));
                         border-radius:2px;">
             </div>
         </div>
-        {cards}
+        {visible_cards}
+        {hidden_block}
+        {toggle_btn}
     </div>
     """
 
